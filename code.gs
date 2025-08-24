@@ -24,16 +24,13 @@ function doPost(e) {
   try {
     var body = (e && e.postData && e.postData.contents) ? e.postData.contents : '{}';
     var data = {};
-    try { data = JSON.parse(body); } catch (_){}
+    try { data = JSON.parse(body); } catch (_){ }
 
     var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
-    // 1) Sessions sheet (with calculated columns)
     var sessions = getOrCreateSheet_(ss, SESSIONS_SHEET_NAME);
     var sessionsHeaders = [
-      'Timestamp','Local Date','Local Hour','Time-of-Day','User ID','Sitdown ID','Attempt #',
-      'Score','Page URL','Game Key','Duration Seconds','Score/Second','Standardized Score',
-      'Problems JSON','Problem Count'
+      'Timestamp','User ID','Score','Page URL','Game Key','Duration Seconds','Problems JSON'
     ];
     ensureHeader_(sessions, sessionsHeaders);
 
@@ -45,80 +42,15 @@ function doPost(e) {
     var durationSeconds = (data.durationSeconds != null && data.durationSeconds !== '') ? Number(data.durationSeconds) : '';
     var problems        = (data.problems && data.problems.length) ? data.problems : [];
 
-    var local = computeLocalFields_(timestamp);
-    var sit   = upsertSitdown_(ss, userId, timestamp); // { id, attempt }
-
-    var scorePerSec = '';
-    var standardized = '';
-    if (durationSeconds && durationSeconds > 0) {
-      scorePerSec = score / durationSeconds;
-      standardized = scorePerSec * 120;
-    }
-
     sessions.appendRow([
       timestamp,
-      local.localDate,
-      local.localHour,
-      local.bucket,
       userId,
-      sit.id,
-      sit.attempt,
       score,
       pageUrl,
       gameKey,
       durationSeconds,
-      scorePerSec,
-      standardized,
-      JSON.stringify(problems),
-      problems.length
+      JSON.stringify(problems)
     ]);
-
-    // 2) Problems sheet (one row per problem)
-    var problemsSh = getOrCreateSheet_(ss, PROBLEMS_SHEET_NAME);
-    var problemsHeaders = [
-      'Timestamp','User ID','Game Key','Duration Seconds',
-      'Problem #','Operator','A','B','Latency Ms',
-      'Cum Ms','Third','Decile',
-      'Correct Answer','Final Answer','Wrong Full-Length Attempts'
-    ];
-    ensureHeader_(problemsSh, problemsHeaders);
-
-    var cumMs = 0;
-    var durMs = (durationSeconds && durationSeconds > 0) ? (durationSeconds * 1000) : 0;
-
-    for (var i = 0; i < problems.length; i++) {
-      var p = problems[i] || {};
-      var qText = String(p.question || '');
-      var norm = qText.replace(/×/g, '*').replace(/÷/g, '/');
-      var m = norm.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/);
-      var A = m ? Number(m[1]) : '';
-      var op = m ? m[2] : (p.operationType || '');
-      var B = m ? Number(m[3]) : '';
-      var lat = Number(p.latency || 0);
-
-      cumMs += lat;
-      var frac = (durMs > 0) ? (cumMs / durMs) : 0;
-      var third = (durMs > 0) ? Math.min(3, Math.max(1, Math.ceil(frac * 3))) : '';
-      var decile = (durMs > 0) ? Math.min(10, Math.max(1, Math.ceil(frac * 10))) : '';
-
-      var correct = '';
-      if (m) {
-        try { correct = eval(String(A) + op + String(B)); } catch (_){}
-      }
-
-      problemsSh.appendRow([
-        timestamp, userId, gameKey, durationSeconds,
-        (i + 1), op || '', A, B, lat,
-        cumMs, third, decile,
-        correct, (p.answer || ''), (p.wrongFullLen || '')
-      ]);
-    }
-
-    // 3) GameModes: ensure a blank row for this key (you fill manually)
-    ensureGameModeRow_(ss, gameKey);
-
-    // 4) DailyStats: single row per date, update aggregates
-    upsertDailyStats_(ss, local.localDate, durationSeconds, standardized);
 
     return ContentService.createTextOutput('OK').setMimeType(ContentService.MimeType.TEXT);
   } catch (err) {
